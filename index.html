@@ -131,6 +131,19 @@
   }
 
   /* 운동 종목 목록 */
+  .exercise-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 10px;
+  }
+  .exercise-toolbar select {
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 14px;
+    background: #fff;
+    color: #1a1a1a;
+  }
   .exercise-add-row {
     display: flex;
     gap: 8px;
@@ -255,6 +268,13 @@
     border-radius: 8px;
     font-size: 15px;
   }
+  .add-set-btn {
+    width: 100%;
+    margin-bottom: 10px;
+  }
+  #cardio-input-row {
+    display: none;
+  }
   .temp-set-list {
     list-style: none;
     margin: 0 0 10px 0;
@@ -336,8 +356,11 @@
     <div class="category-card" data-category="shoulder" data-label="어깨">
       <span class="icon">🏋️</span>어깨
     </div>
-    <div class="category-card wide" data-category="leg" data-label="하체">
+    <div class="category-card" data-category="leg" data-label="하체">
       <span class="icon">🦵</span>하체
+    </div>
+    <div class="category-card" data-category="cardio" data-label="유산소">
+      <span class="icon">🏃</span>유산소
     </div>
   </div>
 </div>
@@ -349,6 +372,13 @@
     <span class="title" id="category-title">카테고리</span>
   </div>
   <div class="category-body">
+    <div class="exercise-toolbar">
+      <select id="exercise-sort-select">
+        <option value="default">등록순</option>
+        <option value="name">이름순</option>
+        <option value="recent">최근 등록순</option>
+      </select>
+    </div>
     <div class="exercise-add-row">
       <input type="text" id="new-exercise-input" placeholder="운동 종목 이름 입력">
       <button id="add-exercise-btn">추가</button>
@@ -378,11 +408,16 @@
     </div>
 
     <div class="set-input-card">
-      <div class="set-input-row">
+      <div class="set-input-row" id="strength-input-row">
         <input type="number" id="set-weight-input" placeholder="무게(kg)" inputmode="decimal" step="0.5">
         <input type="number" id="set-reps-input" placeholder="횟수" inputmode="numeric">
-        <button id="add-set-btn">세트 추가</button>
       </div>
+      <div class="set-input-row" id="cardio-input-row">
+        <input type="number" id="set-minutes-input" placeholder="분" inputmode="numeric" min="0">
+        <input type="number" id="set-seconds-input" placeholder="초" inputmode="numeric" min="0" max="59">
+        <input type="number" id="set-distance-input" placeholder="거리(km, 선택)" inputmode="decimal" step="0.01">
+      </div>
+      <button id="add-set-btn" class="add-set-btn">세트 추가</button>
       <ul class="temp-set-list" id="temp-set-list"></ul>
       <button id="save-record-btn" class="save-btn" disabled>오늘 기록 저장</button>
     </div>
@@ -424,7 +459,25 @@
     return `${y}-${m}-${day}`;
   }
 
+  function isCardioSet(set) {
+    return !!set && typeof set.durationSec === 'number';
+  }
+
+  function isCardioCategory(category) {
+    return category === 'cardio';
+  }
+
   function formatSet(set) {
+    if (isCardioSet(set)) {
+      const m = Math.floor(set.durationSec / 60);
+      const s = set.durationSec % 60;
+      const parts = [];
+      if (m > 0) parts.push(`${m}분`);
+      parts.push(`${s}초`);
+      let text = parts.join(' ');
+      if (set.distance) text += ` · ${set.distance}km`;
+      return text;
+    }
     return `${set.weight}kg×${set.reps}회`;
   }
 
@@ -440,14 +493,27 @@
     return { date: last.date, text: last.sets.map(formatSet).join(', ') };
   }
 
-  // 최고 기록: 지금까지 기록된 세트 중 가장 무거운 무게
+  // 최고 기록: 근력 운동은 무게 우선, 같은 무게면 횟수가 많은 쪽이 우선.
+  // 유산소 운동은 시간이 더 길거나(우선), 시간이 같으면 거리가 더 긴 쪽이 우선.
   function getBest(exerciseId) {
     const logs = getLogs(exerciseId);
     let best = null;
     logs.forEach(log => {
       log.sets.forEach(set => {
-        if (!best || set.weight > best.weight) {
-          best = { weight: set.weight, reps: set.reps, date: log.date };
+        if (isCardioSet(set)) {
+          const isBetter = !best || !isCardioSet(best) ||
+            set.durationSec > best.durationSec ||
+            (set.durationSec === best.durationSec && (set.distance || 0) > (best.distance || 0));
+          if (isBetter) {
+            best = { durationSec: set.durationSec, distance: set.distance, date: log.date };
+          }
+        } else {
+          const isBetter = !best || isCardioSet(best) ||
+            set.weight > best.weight ||
+            (set.weight === best.weight && set.reps > best.reps);
+          if (isBetter) {
+            best = { weight: set.weight, reps: set.reps, date: log.date };
+          }
         }
       });
     });
@@ -504,9 +570,28 @@
   const exerciseListEl = document.getElementById('exercise-list');
   const newExerciseInput = document.getElementById('new-exercise-input');
   const addExerciseBtn = document.getElementById('add-exercise-btn');
+  const exerciseSortSelect = document.getElementById('exercise-sort-select');
+  const MAX_EXERCISES_PER_CATEGORY = 20;
+
+  let currentSort = 'default';
+
+  function getSortedExerciseList() {
+    const list = (data.exercises[currentCategory] || []).slice();
+    if (currentSort === 'name') {
+      list.sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+    } else if (currentSort === 'recent') {
+      list.sort((a, b) => b.id.localeCompare(a.id));
+    }
+    return list;
+  }
+
+  exerciseSortSelect.addEventListener('change', () => {
+    currentSort = exerciseSortSelect.value;
+    renderExerciseList();
+  });
 
   function renderExerciseList() {
-    const list = data.exercises[currentCategory] || [];
+    const list = getSortedExerciseList();
     exerciseListEl.innerHTML = '';
 
     if (list.length === 0) {
@@ -563,6 +648,10 @@
     const name = newExerciseInput.value.trim();
     if (!name) return;
     if (!data.exercises[currentCategory]) data.exercises[currentCategory] = [];
+    if (data.exercises[currentCategory].length >= MAX_EXERCISES_PER_CATEGORY) {
+      alert(`운동 종목은 카테고리당 최대 ${MAX_EXERCISES_PER_CATEGORY}개까지 등록할 수 있습니다.`);
+      return;
+    }
     data.exercises[currentCategory].push({ id: genId(), name });
     newExerciseInput.value = '';
     saveData();
@@ -579,8 +668,13 @@
   const prevRecordDateEl = document.getElementById('prev-record-date');
   const bestRecordEl = document.getElementById('best-record');
   const bestRecordDateEl = document.getElementById('best-record-date');
+  const strengthInputRow = document.getElementById('strength-input-row');
+  const cardioInputRow = document.getElementById('cardio-input-row');
   const setWeightInput = document.getElementById('set-weight-input');
   const setRepsInput = document.getElementById('set-reps-input');
+  const setMinutesInput = document.getElementById('set-minutes-input');
+  const setSecondsInput = document.getElementById('set-seconds-input');
+  const setDistanceInput = document.getElementById('set-distance-input');
   const addSetBtn = document.getElementById('add-set-btn');
   const tempSetListEl = document.getElementById('temp-set-list');
   const saveRecordBtn = document.getElementById('save-record-btn');
@@ -591,7 +685,14 @@
     return list.find(ex => ex.id === currentExerciseId);
   }
 
+  function updateInputModeUI() {
+    const cardio = isCardioCategory(currentCategory);
+    strengthInputRow.style.display = cardio ? 'none' : 'flex';
+    cardioInputRow.style.display = cardio ? 'flex' : 'none';
+  }
+
   function renderExerciseScreen() {
+    updateInputModeUI();
     const ex = getCurrentExercise();
     exerciseTitle.textContent = ex ? ex.name : '운동';
 
@@ -642,13 +743,28 @@
   }
 
   addSetBtn.addEventListener('click', () => {
-    const weight = parseFloat(setWeightInput.value);
-    const reps = parseInt(setRepsInput.value, 10);
-    if (!weight || !reps) return;
-    tempSets.push({ weight, reps });
-    setWeightInput.value = '';
-    setRepsInput.value = '';
-    setWeightInput.focus();
+    if (isCardioCategory(currentCategory)) {
+      const minutes = parseInt(setMinutesInput.value, 10) || 0;
+      const seconds = parseInt(setSecondsInput.value, 10) || 0;
+      const distance = setDistanceInput.value.trim() ? parseFloat(setDistanceInput.value) : undefined;
+      const durationSec = minutes * 60 + seconds;
+      if (!durationSec) return;
+      const set = { durationSec };
+      if (distance) set.distance = distance;
+      tempSets.push(set);
+      setMinutesInput.value = '';
+      setSecondsInput.value = '';
+      setDistanceInput.value = '';
+      setMinutesInput.focus();
+    } else {
+      const weight = parseFloat(setWeightInput.value);
+      const reps = parseInt(setRepsInput.value, 10);
+      if (!weight || !reps) return;
+      tempSets.push({ weight, reps });
+      setWeightInput.value = '';
+      setRepsInput.value = '';
+      setWeightInput.focus();
+    }
     renderTempSetList();
   });
 
