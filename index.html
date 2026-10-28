@@ -959,12 +959,36 @@
     chart.appendChild(recordNode('p','첫 기록 '+Number(firstPoint.value.toFixed(2))+unit+' → 최근 '+Number(lastPoint.value.toFixed(2))+unit+' · 변화 '+(change>0?'+':'')+Number(change.toFixed(2))+unit,'record-note'));
   }
 
-  // ---------- PWA: 서비스워커 등록 ----------
+  // ---------- PWA: 업데이트 확인 ----------
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./service-worker.js').catch((err) => {
-        console.warn('서비스워커 등록 실패:', err);
-      });
+    let reloadingForUpdate = false;
+    function hasUnsavedWorkout() {
+      return tempSets.length > 0 || [setWeightInput, setRepsInput, setMinutesInput, setSecondsInput, setDistanceInput, newExerciseInput].some(input => input.value.trim());
+    }
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloadingForUpdate) return;
+      if (!hasUnsavedWorkout()) {
+        reloadingForUpdate = true;
+        window.location.reload();
+      } else {
+        const notice = document.createElement('button');
+        notice.textContent = '새 버전이 준비됐습니다. 기록을 저장한 뒤 여기를 눌러 업데이트하세요.';
+        notice.style.cssText = 'position:fixed;bottom:16px;left:16px;right:16px;z-index:1000;padding:14px;border:0;border-radius:12px;background:#2d6cdf;color:#fff;font-size:14px;box-shadow:0 2px 12px #0003';
+        notice.addEventListener('click', () => {
+          if (hasUnsavedWorkout()) { alert('입력 중인 내용을 먼저 저장하거나 비워주세요.'); return; }
+          window.location.reload();
+        });
+        document.body.appendChild(notice);
+      }
+    });
+    window.addEventListener('load', async () => {
+      try {
+        const registration = await navigator.serviceWorker.register('./service-worker.js', { updateViaCache: 'none' });
+        const checkUpdate = () => registration.update().catch(err => console.warn('업데이트 확인 실패:', err));
+        checkUpdate();
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
+        window.addEventListener('online', checkUpdate);
+      } catch (err) { console.warn('서비스워커 등록 실패:', err); }
     });
   }
 </script>
