@@ -1,4 +1,4 @@
-const CACHE_NAME = 'weight-tracker-v5-20261028';
+const CACHE_NAME = 'weight-tracker-v6-exercise-detail-20261028';
 const CACHE_PREFIX = 'weight-tracker-';
 const ASSETS = ['./', './index.html', './manifest.json', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-180.png', './icons/icon-32.png'];
 
